@@ -108,7 +108,7 @@ Convert peptides to DNA with `pepsyn`:
 | Step | Tool | Description |
 |------|------|-------------|
 | 1 | `stripstop` | Remove stop codons |
-| 2 | `pad -l 64` | Pad inserts to 64 aa | (not relevant for this set but kept for future compatibility)
+| 2 | `pad -l 64` | Pad inserts to 64 aa (not relevant for this set but kept for future compatibility) |
 | 3 | `disambiguateaa` | Resolve ambiguous residues |
 | 4 | `revtrans --codon-freq-threshold 0.01` | Reverse translate using E. coli codons (>1% frequency) |
 | 5 | `prefix` | Add 5' adapter (19 bp) |
