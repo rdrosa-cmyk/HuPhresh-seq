@@ -1,0 +1,33 @@
+# =============================================================================
+# Data files are NOT committed: they are large (multi-GB) and fully regenerable
+# by running JP_peptidome.ipynb. Raw inputs are downloaded from their sources
+# (GENCODE, Ribo-seq ORFs, UniProt) — see README.md.
+# =============================================================================
+
+# Raw input proteomes (download from source; see README)
+peptidome_proteomes/
+
+# All generated intermediates and final oligo/peptide FASTAs
+peptidome_library_construction/
+
+# Generic large bioinformatics outputs (in case paths change)
+*.fasta
+*.fa
+*.faa
+*.fa.gz
+*.faa.gz
+*.clstr
+*.tsv
+
+# -----------------------------------------------------------------------------
+# Jupyter / Python
+# -----------------------------------------------------------------------------
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+
+# -----------------------------------------------------------------------------
+# OS / editor cruft
+# -----------------------------------------------------------------------------
+.DS_Store
+*.swp

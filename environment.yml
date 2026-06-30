@@ -1,0 +1,13 @@
+name: peptidome
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pepsyn=0.4.1
+  - cd-hit=4.8.1
+  - matplotlib=3.10
+  - numpy=2.4
+  - pip
+  - pip:
+      - dnachisel==3.2.16
