@@ -7,6 +7,7 @@ into synthesis-ready DNA oligos. It tiles two protein sources plus a control:
 - **GENCODE v50** protein-coding translations (the canonical human peptidome)
 - **Ribo-seq dark-proteome ncORFs** (non-canonical / dark-proteome ORFs)
 - **GFP (P42212)** as a negative control
+- **XTEN linker (64 aa)** as a second negative control
 
 Design follows the i-PanSeq library approach
 (https://www.protocols.io/view/i-panseq-library-design-rm7vz9od4gx1/v1).
@@ -17,7 +18,7 @@ Design follows the i-PanSeq library approach
 | `peptidome_proteomes/` | Raw input proteomes (GENCODE FASTA + GTF, Ribo-seq ORFs) |
 | `peptidome_library_construction/GENCODE/` | GENCODE intermediates, tiles, CD-HIT outputs |
 | `peptidome_library_construction/Riboseq/` | Ribo-seq ncORF intermediates, tiles, CD-HIT outputs |
-| `peptidome_library_construction/NegativeControls/` | GFP control intermediates and tiles |
+| `peptidome_library_construction/NegativeControls/` | GFP and XTEN-linker control intermediates and tiles |
 | `peptidome_library_construction/` | Final merged peptides and encoded oligos |
 | `JP_peptidome.ipynb` | The full pipeline (run cells top to bottom) |
 
@@ -28,6 +29,8 @@ Design follows the i-PanSeq library approach
 | GENCODE annotation | `1_gencode.v50.annotation.gtf.gz` | Used to select protein_coding transcript IDs |
 | Ribo-seq ncORFs | `2_darkproteome_Ribo-seq_ORFs.primary.faa` | Dark-proteome / non-canonical ORFs |
 | Negative control | GFP `P42212` (UniProt) | Non-human, no expected human reactivity |
+| Negative control | XTEN linker (64 aa) | Non-human unstructured linker; defined in-notebook, no expected human reactivity |
+| Sticky-hit list | DeRisi-lab "usual suspects" (`usualsuspects_k10_peptidome.csv`) | Promiscuous binders to exclude before encoding — **currently only MYO16A** |
 
 ## Key Design Choice: long vs short proteins
 Each source is split into two streams **before** tiling and clustering:
@@ -83,18 +86,24 @@ Parse `.clstr` files; mark representative headers that absorbed members with `#`
 Same cleanup → split → tiling → CD-HIT → collapse-record workflow as GENCODE,
 applied to the dark-proteome ORFs.
 
-### 10–11. GFP control (Cells 10–11)
+### 10–11. Negative controls (Cells 10–11)
 Copy and tile GFP (238 aa, naturally long); deduplicate only at 100% full-length
-identity so control representation is preserved.
+identity so control representation is preserved. Cell 10 also writes a second
+negative control: a single, defined **64-aa XTEN linker peptide**
+(`nc_XTEN_linker_64aa.fasta`). The XTEN control reuses the same XTEN sequence used
+for short-protein padding (59 aa), cyclically extended to exactly 64 aa. Because it
+is one fixed peptide already at full insert length, it needs no tiling or CD-HIT and
+is added directly in the merge step.
 
 ### 12. Merge all peptide sets (Cell 12)
-Combine all eight sub-libraries into one amino-acid FASTA. Each record gets a
-compact, **whitespace-free unique ID**:
+Combine all nine sub-libraries (GENCODE long/cterm/short, Riboseq long/cterm/short,
+GFP regular/cterm, and the XTEN linker control) into one amino-acid FASTA. Each
+record gets a compact, **whitespace-free unique ID**:
 
 ```
-<source>|<protein>|<specific_id>|<tile>
+<source>|<protein>|<specific_id>|<tile>|<fragment_label>
 ```
-e.g. `GENCODE_long_w64s42|OR4F5|ENSP00000493376.2|0-64`
+e.g. `GENCODE_long_w64s42|OR4F5|ENSP00000493376.2|0-64|fragment_0`
 
 This is required because the downstream `pepsyn` encoding truncates FASTA headers
 at the first whitespace; putting a space-free ID first keeps a real per-peptide
@@ -102,8 +111,39 @@ identifier on every oligo. The cell validates header shapes and **raises on any
 duplicate ID** (read-to-peptide mapping must be 1:1). Where available it prefers
 the `marked_representatives` FASTAs so CD-HIT cluster metadata is preserved.
 
-### 13. Oligo generation (Cell 13)
-Convert peptides to DNA with `pepsyn`:
+**Fragment label.** The trailing `<fragment_label>` reflects the fragment's
+**original tile order before CD-HIT collapse**. Regular tiles step by
+`64 - 42 = 22` aa along the protein, so the index is simply `start // 22`
+(`0-64 → fragment_0`, `22-86 → fragment_1`, …). Because the number is derived
+from the original coordinate, CD-HIT-collapsed tiles just leave gaps in the
+numbering rather than renumbering survivors. The separately generated C-terminal
+peptide is labeled `C-term`. Both the amino-acid range and the fragment label are
+kept. The same scheme applies to the GFP and XTEN controls.
+
+### 13. Sticky-peptide exclusion (Cell 13)
+Remove known promiscuous / "sticky" PhIP-seq binders **before** encoding so they
+never reach the chip. The sticky list comes from the **DeRisi-lab "usual suspects"
+sticky PhIP-seq hits** (`usualsuspects_k10_peptidome.csv`).
+
+**Currently only MYO16A is removed.** Its top two sticky hits in that sheet (by
+antigen-sample hits) are two overlapping MYO16A fragments — `fragment_52`
+(2748 hits) and `fragment_53` (1874 hits). The cell computes the **overlapping
+region** shared by those two fragments (`PSSMSVCAAVDGLGQCLVGPSIWS`, 24 aa) and drops
+any library peptide that contains it.
+
+- **Matching:** substring — any peptide containing a sticky motif is removed.
+- **Controls are not exempt:** GFP and XTEN are filtered like every other source.
+- **Inputs:** `merged_peptides.fasta`
+- **Outputs:** `filtered_peptides.fasta` (feeds Cell 14) and
+  `excluded_sticky_peptides.tsv` (audit trail: dropped ID, source, sticky protein,
+  matched fragments, motif, sequence).
+
+With only MYO16A, exactly **2** GENCODE peptides are removed. The `sticky_hits`
+dict is easy to extend — add more proteins/fragments from the sheet later (no other
+proteins are excluded at present).
+
+### 14. Oligo generation (Cell 14)
+Convert the **filtered** peptides to DNA with `pepsyn`:
 
 | Step | Tool | Description |
 |------|------|-------------|
@@ -115,7 +155,7 @@ Convert peptides to DNA with `pepsyn`:
 | 6 | `suffix` | Add 3' FLAG tag (24 bp) + adapter (19 bp) |
 | 7 | `recodesite` | Remove EcoRI / HindIII / XhoI sites from the coding region |
 
-### 14. GC / homopolymer repair — DNAChisel (Cell 14)
+### 15. GC / homopolymer repair — DNAChisel (Cell 15)
 `pepsyn` already produces E. coli codon-optimized oligos, but a small minority fall
 outside the synthesis-friendly and PCR window. This cell reads the **raw** pepsyn
 oligos, re-encodes **only flagged** oligos, and writes a separate **post-repair**
@@ -136,20 +176,20 @@ Repair (`DnaOptimizationProblem`):
 GC is enforced as a band rather than minimized so that codons are nudged only
 enough to enter the window, preserving E. coli expression.
 
-### 15–16. GC analysis (Cells 15–16)
-Overall oligo GC distribution (Cell 15) and GC split by source — GENCODE vs
-Ribo-seq vs GFP (Cell 16).
+### 16–17. GC analysis (Cells 16–17)
+Overall oligo GC distribution (Cell 16) and GC split by source — GENCODE vs
+Ribo-seq vs negative controls (GFP + XTEN) (Cell 17).
 
-### 17. Quality control (Cell 17)
+### 18. Quality control (Cell 18)
 On the final encoded oligos:
 - **ID uniqueness** — every oligo maps back to exactly one peptide
 - **Stop codons** — none in the coding region
 - **Restriction sites** — no EcoRI/HindIII/XhoI anywhere in the oligo
 - **Length** — every oligo is 254 bp
-- **Flanking sequences untouched** — 5' adapter and 3' FLAG+adapter match exactly
+- **Flanking sequences untouched** — the output 5' adapter and 3' FLAG+adapter each match the encode-cell input (pepsyn prefix/suffix) exactly; checked separately so any drift is unambiguous
 - **GC band** — every oligo is within 35–65% GC
 - **Homopolymer** — no single-base run ≥ 10 bp
-- **Record count** — oligo count matches the merged peptide library (nothing lost or added)
+- **Record count** — oligo count matches the filtered (sticky-excluded) peptide library (nothing lost or added)
 
 ## Oligo Structure
 ```
@@ -162,6 +202,8 @@ Total oligo length: **254 bp** (64-aa insert × 3 + 62 bp fixed flanks).
 | File | Description |
 |------|-------------|
 | `peptidome_library_construction/human_peptidome_JP_library.merged_peptides.fasta` | Merged peptides (all sources) with unique IDs |
+| `peptidome_library_construction/human_peptidome_JP_library.filtered_peptides.fasta` | Merged peptides after sticky-hit removal (input to encoding) |
+| `peptidome_library_construction/excluded_sticky_peptides.tsv` | Audit of peptides removed by the sticky filter |
 | `peptidome_library_construction/human_peptidome_JP_library.raw_encoded_oligos.fasta` | Raw pepsyn DNA oligos (pre-repair) |
 | `peptidome_library_construction/human_peptidome_JP_library.encoded_oligos.fasta` | Final synthesis-ready DNA oligos (post DNAChisel repair) |
 | `GENCODE/`, `Riboseq/`, `NegativeControls/` | Per-source tiles, CD-HIT outputs, and `cdhit_collapse_records/` (marked FASTAs + cluster TSVs) |
@@ -169,7 +211,7 @@ Total oligo length: **254 bp** (64-aa insert × 3 + 62 bp fixed flanks).
 ## Tools Required
 - **pepsyn** — peptide tiling and reverse translation
 - **cd-hit** — sequence clustering
-- **DNAChisel** — GC / homopolymer repair (Cell 14)
+- **DNAChisel** — GC / homopolymer repair (Cell 15)
 - **Python 3** with `matplotlib`, `numpy`
 
 Create the environment from the included spec:
@@ -193,5 +235,6 @@ translations + GTF, Ribo-seq ORFs, UniProt GFP P42212) into `peptidome_proteomes
 then run the notebook.
 
 ## Usage
-Run cells 0–17 sequentially in `JP_peptidome.ipynb`. If the XTEN linker, adapters,
-or tiling parameters change, rerun the whole pipeline from Cell 0.
+Run cells 0–18 sequentially in `JP_peptidome.ipynb`. If the XTEN linker, adapters,
+or tiling parameters change, rerun the whole pipeline from Cell 0. If only the
+sticky-hit list changes, rerun from Cell 13 (sticky exclusion) onward.
