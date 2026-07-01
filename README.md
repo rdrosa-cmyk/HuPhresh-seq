@@ -1,4 +1,4 @@
-# HuPhresh-seq
+# Human Peptidome PhIP-seq Library (JP)
 
 ## Overview
 This pipeline generates a genome-wide human PhIP-seq peptide library and converts it
